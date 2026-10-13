@@ -1,4 +1,4 @@
-const { randomUUID } = require("crypto");
+const { hash } = require("../outbox");
 
 const transactionSchema = {
   schema: {
@@ -6,9 +6,10 @@ const transactionSchema = {
       type: "object",
       properties: {
         amount: { type: ["number", "string"], default: 0 },
-        payee: { type: "string", default: "Unknown" },
-        account: { type: "string" },
-        notes: { type: "string" },
+        payee: { type: "string", maxLength: 500, default: "Unknown" },
+        account: { type: "string", minLength: 1, maxLength: 200 },
+        eventId: { type: "string", pattern: "^[A-Za-z0-9_-]{8,128}$" },
+        notes: { type: "string", maxLength: 4000 },
         date: { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$" },
         latitude: { type: "number", minimum: -90, maximum: 90 },
         longitude: { type: "number", minimum: -180, maximum: 180 },
@@ -48,7 +49,7 @@ const parseAmount = (raw) => {
     value = isDecimalComma ? value.replace(",", ".") : value.replace(/,/g, "");
   }
 
-  return parseFloat(value);
+  return /^-?\d+(?:\.\d+)?$/.test(value) ? Number(value) : NaN;
 };
 
 const createTransaction = (request) => {
@@ -58,7 +59,6 @@ const createTransaction = (request) => {
   const transactionAmount = amount !== undefined && !isNaN(amount) ? Math.round(amount * 100) * (isDeposit ? 1 : -1) : 0;
 
   return {
-    id: randomUUID(),
     payee_name: payee || "Unknown",
     amount: transactionAmount,
     notes: notes || "",
@@ -67,87 +67,64 @@ const createTransaction = (request) => {
   };
 };
 
-const getAccountId = async (fastify, accountName) => {
-  const accounts = await fastify.actual.getAccounts();
-  const account = accounts.find((acc) => acc.name.toLowerCase() === accountName.toLowerCase());
-  return { accountId: account?.id, accounts };
+const waitBriefly = async (work) => {
+  let timer;
+  try { await Promise.race([work, new Promise((resolve) => { timer = setTimeout(resolve, 1500); })]); }
+  finally { clearTimeout(timer); }
 };
 
-const savePayeeLocation = async (fastify, payeeName, latitude, longitude) => {
-  const payee = (await fastify.actual.getPayees()).find(
-    ({ name }) => name.toLowerCase() === payeeName.trim().toLowerCase()
-  );
-  if (!payee) return;
-
-  const nearby = await fastify.actualInternal.send("api/payees-get-nearby", {
-    latitude,
-    longitude,
-    maxDistance: 500,
-  });
-  if (!nearby.some(({ location }) => location.payee_id === payee.id)) {
-    await fastify.actualInternal.send("api/payee-location-create", { payeeId: payee.id, latitude, longitude });
-  }
-};
-
-module.exports = async (fastify, opts) => {
-  fastify.post("/transaction", transactionSchema, async (request, reply) => {
-    request.log.info(`Received transaction request with body: ${JSON.stringify(request.body)}`);
-
-    const hasLocation = request.body.latitude !== undefined || request.body.longitude !== undefined;
-    if (hasLocation && (request.body.latitude === undefined || request.body.longitude === undefined)) {
-      return reply.code(400).send({ error: "Invalid location", message: "latitude and longitude must be provided together" });
+module.exports = async (app) => {
+  app.post('/transaction', transactionSchema, async (request, reply) => {
+    const { latitude, longitude, eventId } = request.body;
+    const hasLocation = latitude !== undefined || longitude !== undefined;
+    if (hasLocation && (latitude === undefined || longitude === undefined)) {
+      return reply.code(400).send({ error: 'latitude and longitude must be provided together' });
     }
-
-    if (request.body.date && !isValidDate(request.body.date)) {
-      return reply.code(400).send({
-        error: "Invalid date",
-        message: `"${request.body.date}" is not a valid calendar date. Expected format: YYYY-MM-DD`,
-      });
+    if (request.body.date && !isValidDate(request.body.date)) return reply.code(400).send({ error: 'Invalid calendar date' });
+    const headerKey = request.headers['idempotency-key'];
+    if (headerKey !== undefined && (typeof headerKey !== 'string' || !/^[A-Za-z0-9_-]{8,128}$/.test(headerKey))) {
+      return reply.code(400).send({ error: 'Idempotency-Key must contain 8-128 letters, digits, underscores or hyphens' });
     }
-
+    if (eventId && headerKey && eventId !== headerKey) return reply.code(400).send({ error: 'eventId and Idempotency-Key must match' });
+    const key = headerKey || eventId;
+    const account = request.body.account.toLowerCase();
+    if (request.device.accounts && !request.device.accounts.includes(account)) return reply.code(403).send({ error: 'Account not permitted for this device' });
+    const amount = typeof request.body.amount === 'string' ? parseAmount(request.body.amount) : request.body.amount;
+    if (!Number.isFinite(amount) || amount < 0 || !Number.isSafeInteger(Math.round(amount * 100))) {
+      return reply.code(400).send({ error: 'Amount must be a non-negative finite value in major currency units' });
+    }
     const transaction = createTransaction(request);
-    const accountName = request.body.account;
-    const { accountId, accounts } = await getAccountId(fastify, accountName);
-
-    if (!accountId) {
-      return reply.code(400).send({
-        error: "Invalid account",
-        message: `Account "${accountName}" not found. Available accounts: ${accounts.map((a) => a.name).join(", ")}`,
-      });
+    // Preserve the omission of date in the fingerprint, so retries across midnight match.
+    const fingerprint = hash(JSON.stringify({ ...transaction, date: request.body.date || null, account,
+      type: request.body.type, latitude: latitude ?? null, longitude: longitude ?? null }));
+    const existing = key ? app.outbox.lookup(request.device.id, key) : null;
+    let accountId;
+    if (!existing) {
+      const accounts = await app.actual.getAccounts();
+      accountId = accounts.find((a) => !a.closed && a.name.toLowerCase() === account)?.id;
+      if (!accountId) return reply.code(400).send({ error: 'Invalid or closed account' });
     }
-
-    const result = await fastify.actual.addTransactions(accountId, [transaction]);
-
-    if (result !== "ok") {
-      const errorMessage = result?.errors ? result.errors.join(", ") : JSON.stringify(result);
-      throw new Error(`Failed to add transaction: ${errorMessage}`);
-    }
-
-    fastify.log.info("Transaction added successfully");
-
-    // Saving the payee location is best-effort: a failure here must not block
-    // the transaction from syncing, so swallow and log rather than 500.
-    if (hasLocation) {
-      try {
-        await savePayeeLocation(fastify, transaction.payee_name, request.body.latitude, request.body.longitude);
-      } catch (locErr) {
-        request.log.error(`Failed to save payee location: ${locErr.message}`);
-      }
-    }
-
-    // Explicitly sync to the server so we catch errors (e.g. expired auth)
-    // before responding, rather than returning 200 with a silent sync failure
+    let accepted;
     try {
-      await fastify.actual.sync();
-      fastify.log.info("Sync completed successfully");
-    } catch (syncErr) {
-      fastify.log.error(`Sync failed after adding transaction: ${syncErr.message}`);
-      return reply.code(500).send({
-        error: "Sync failed",
-        message: "Transaction was saved locally but failed to sync to the server. It may be lost on restart.",
-      });
+      accepted = app.outbox.enqueue({ device: request.device.id, key, fingerprint,
+        payload: { accountId, transaction, location: hasLocation ? { latitude, longitude } : null } });
+    } catch (error) {
+      const status = error.statusCode || 503;
+      return reply.code(status).send({ error: status === 409 ? error.message : 'Request was not accepted; check storage or retry later with the same idempotency key' });
     }
-
-    return reply.send(transaction);
+    await waitBriefly(app.outbox.attempt(accepted.row.id));
+    const row = app.outbox.get(accepted.row.id);
+    const queued = row.state !== 'synced';
+    request.log.info({ transactionId: row.id, device: request.device.id, status: row.state, replayed: accepted.replayed }, 'Transaction request handled');
+    reply.header('Location', `/transactions/${row.id}`);
+    if (queued) reply.header('Retry-After', '5');
+    return reply.code(queued ? 202 : 200).send({ ...app.outbox.response(row), replayed: accepted.replayed });
   });
+
+  app.get('/transactions/:id', async (request, reply) => {
+    const row = app.outbox.get(request.params.id);
+    if (!row || row.device !== request.device.id) return reply.code(404).send({ error: 'Not found' });
+    return { ...app.outbox.response(row), attempts: row.attempts, lastError: row.last_error };
+  });
+  app.get('/status', async (request) => app.outbox.stats(request.device.id));
 };

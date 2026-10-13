@@ -2,6 +2,10 @@ services:
   actualtap:
     container_name: actualtap
     image: fdotcico/actualtap-oidc:latest
+    restart: unless-stopped
+    stop_grace_period: 90s
+    volumes:
+      - ./data:/data
     ports:
       - 3003:3001
     environment:
@@ -10,6 +14,7 @@ services:
       - ACTUAL_SESSION_TOKEN=
       - ACTUAL_SYNC_ID=
       - API_KEY=
+      - DATA_DIR=/data
     network_mode: bridge
     healthcheck:
       test: wget --no-verbose --tries=1 --spider http://localhost:3001/health || exit 1

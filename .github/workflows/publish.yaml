@@ -24,7 +24,7 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Test without a live budget
-        run: node --test test/sync-failure.test.js test/session-auth.test.js
+        run: npm run test:offline
       - name: Read application version
         id: version
         run: node -e 'const fs = require("fs"); const v = require("./package.json").version; if (!/^\d+\.\d+\.\d+$/.test(v)) throw new Error("Invalid version"); fs.appendFileSync(process.env.GITHUB_OUTPUT, `version=${v}\n`);'

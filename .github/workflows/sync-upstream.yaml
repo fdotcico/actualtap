@@ -49,7 +49,7 @@ jobs:
         if: steps.merge.outputs.changed == 'true'
         run: |
           npm ci
-          node --test test/sync-failure.test.js test/session-auth.test.js
+          npm run test:offline
           docker build -t actualtap-oidc:upstream-check .
       - name: Open or update the pull request
         if: steps.merge.outputs.changed == 'true'

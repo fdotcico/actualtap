@@ -1,3 +1,4 @@
+if (process.env.ACTUALTAP_TEST_BUDGET !== 'disposable') throw new Error('Live tests require a disposable budget');
 const { describe, it } = require("node:test");
 const assert = require("node:assert");
 const fastify = require("fastify");
@@ -50,11 +51,12 @@ describe("Initialization failures", () => {
     );
   });
 
-  it("should fail with wrong ACTUAL_PASSWORD", async () => {
+  it("should fail with wrong Actual credentials", async () => {
     await assert.rejects(
       async () => {
         await buildServerWithEnv({
           ACTUAL_PASSWORD: "definitely-wrong-password-12345",
+          ACTUAL_SESSION_TOKEN: process.env.ACTUAL_SESSION_TOKEN ? "invalid-test-session" : "",
         });
       },
       (err) => {

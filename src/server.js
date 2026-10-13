@@ -1,5 +1,8 @@
 const fastify = require("fastify")({
+  bodyLimit: 16384,
+  disableRequestLogging: true,
   logger: {
+    redact: ['req.headers', 'request.headers', 'req.body', 'request.body'],
     transport: {
       target: "pino-pretty",
       options: {
@@ -26,31 +29,23 @@ const { version } = require("../package.json");
 async function registerModules() {
   await fastify.register(require("./plugins/env"));
 
-  // Global authentication hook - registered after env to access fastify.config
-  fastify.addHook("preHandler", async (request, reply) => {
-    if (request.url === "/health" || request.url.startsWith("/health?")) {
-      return;
-    }
-
-    const apiKey = request.headers["x-api-key"];
-    if (apiKey !== fastify.config.API_KEY) {
-      reply.code(401).send({ error: "Unauthorized" });
-      return;
-    }
-  });
+  await fastify.register(require('./plugins/auth'));
+  await fastify.register(require('./plugins/outbox'));
 
   await fastify.register(require("@fastify/cors"), {
-    methods: ["POST"],
+    methods: ["GET", "POST"],
   });
   await fastify.register(require("./plugins/actualConnector"));
+  await fastify.register(require("./plugins/delivery"));
   await fastify.register(require("./routes/transaction"));
   await fastify.register(require("./routes/health"));
 }
 
 // Global Error Handler
 fastify.setErrorHandler((error, request, reply) => {
-  fastify.log.error(error);
-  reply.status(error.statusCode || 500).send({ error: error.message || "An error occurred" });
+  const status = error.statusCode || 500;
+  fastify.log.error({ requestId: reply.request.id, statusCode: status }, 'Request failed');
+  reply.status(status).send({ error: status < 500 ? 'Invalid request' : 'Internal server error' });
 });
 
 // Start the server
@@ -70,9 +65,12 @@ const start = async () => {
       }
     }
   } catch (err) {
-    fastify.log.error(err);
+    fastify.log.error({ errorType: err.name }, "Startup failed; check configuration, storage, authentication and connectivity");
+    await fastify.close().catch(() => {});
     process.exit(1);
   }
 };
 
+process.once('SIGTERM', () => { void fastify.close().catch(() => { process.exitCode = 1; }); });
+process.once('SIGINT', () => { void fastify.close().catch(() => { process.exitCode = 1; }); });
 start();

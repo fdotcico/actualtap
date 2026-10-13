@@ -1,6 +1,5 @@
 const actual = require("@actual-app/api");
 const fp = require("fastify-plugin");
-const os = require("os");
 const path = require("path");
 const fs = require("fs");
 
@@ -47,19 +46,19 @@ const verifyConnectivity = async (url) => {
 };
 
 // Initialize Actual API
-const initializeActual = async (serverURL, sessionToken, timeoutMs) => {
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "actualtap-"));
-
+const initializeActual = async (serverURL, credentials, dataDir, timeoutMs) => {
+  fs.mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+  let timer;
   try {
     return await Promise.race([
-      actual.init({ dataDir, serverURL, sessionToken }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error("TIMEOUT")), timeoutMs)),
+      actual.init({ dataDir, serverURL, ...credentials }),
+      new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('TIMEOUT')), timeoutMs); }),
     ]);
   } catch (err) {
-    if (err.message === "TIMEOUT") {
-      throw new Error(`Initialization timed out after ${timeoutMs / 1000} seconds`);
-    }
-    throw new Error(`Failed to initialize Actual API: ${err.message}`);
+    if (err.message === 'TIMEOUT') throw new Error('Actual initialization timed out');
+    throw new Error('Actual initialization failed; check server connectivity and authentication');
+  } finally {
+    clearTimeout(timer);
   }
 };
 
@@ -68,7 +67,7 @@ const verifyAuthentication = async () => {
   try {
     const budgets = await actual.getBudgets();
     if (!budgets || budgets.length === 0) {
-      throw new Error("ACTUAL_SESSION_TOKEN is incorrect or invalid (no budgets found)");
+      throw new Error("Actual credentials are invalid or no budgets are accessible");
     }
     return budgets;
   } catch (err) {
@@ -141,7 +140,7 @@ const verifyBudgetOpen = async () => {
 };
 
 const actualConnector = fp(async (fastify) => {
-  const { ACTUAL_URL, ACTUAL_SESSION_TOKEN, ACTUAL_SYNC_ID, ACTUAL_ENCRYPTION_PASSWORD } = fastify.config;
+  const { ACTUAL_URL, ACTUAL_SESSION_TOKEN, ACTUAL_PASSWORD, ACTUAL_SYNC_ID, ACTUAL_ENCRYPTION_PASSWORD, DATA_DIR } = fastify.config;
 
   const TIMEOUT = 30000;
   const RETRY_COUNT = 3;
@@ -158,7 +157,8 @@ const actualConnector = fp(async (fastify) => {
   fastify.log.info("Server is reachable");
 
   // Initialize Actual API
-  const actualInternal = await initializeActual(url, ACTUAL_SESSION_TOKEN, TIMEOUT);
+  const credentials = ACTUAL_SESSION_TOKEN ? { sessionToken: ACTUAL_SESSION_TOKEN } : { password: ACTUAL_PASSWORD };
+  const actualInternal = await initializeActual(url, credentials, path.join(DATA_DIR, 'actual'), TIMEOUT);
   fastify.log.info("Actual API initialized");
 
   // Verify authentication and get budgets
@@ -167,7 +167,7 @@ const actualConnector = fp(async (fastify) => {
 
   // Verify budget exists
   const budget = verifyBudgetExists(budgets, ACTUAL_SYNC_ID);
-  fastify.log.info(`Budget found: ${budget.name || budget.groupId}`);
+  fastify.log.info("Configured budget found");
 
   // Download budget
   await downloadBudget(ACTUAL_SYNC_ID, ACTUAL_ENCRYPTION_PASSWORD, fastify.log, RETRY_COUNT, RETRY_DELAY);
