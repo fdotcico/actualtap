@@ -1,5 +1,10 @@
 # Actual Tap
 
+> **fdotcico OIDC fork:** this fork uses `ACTUAL_SESSION_TOKEN` instead of
+> `ACTUAL_PASSWORD`. Its image is `fdotcico/actualtap-oidc`; the upstream examples
+> below describe password authentication. See [fork setup and updates](FORK.md)
+> for Docker Hub publishing, Cloudflare Access, and multiple iPhones.
+
 <p align="center">
     <img src="images/logo.webp" width="200" height="200">
     <br>

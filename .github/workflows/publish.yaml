@@ -1,79 +1,51 @@
-# This workflow uses actions that are not certified by GitHub.
-# They are provided by a third-party and are governed by
-# separate terms of service, privacy policy, and support
-# documentation.
-
-name: Publish Multi-Platform Docker image
+name: Publish ActualTap OIDC to Docker Hub
 
 on:
-  release:
-    types: [published]
+  push:
+    branches: [main]
   workflow_dispatch:
-    inputs:
-      tag:
-        description: "Release tag to publish (for example, v1.0.32)"
-        required: true
-        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-oidc
+  cancel-in-progress: false
 
 jobs:
-  push_to_registries:
-    name: Push Docker image to multiple registries
+  publish:
+    if: github.repository == 'fdotcico/actualtap' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    permissions:
-      packages: write
-      contents: read
-      attestations: write
-      id-token: write
     steps:
-      - name: Check out the repo
-        uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-
-      - name: Log in to Docker Hub
-        uses: docker/login-action@v4.6.0
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - name: Test without a live budget
+        run: node --test test/sync-failure.test.js test/session-auth.test.js
+      - name: Read application version
+        id: version
+        run: node -e 'const fs = require("fs"); const v = require("./package.json").version; if (!/^\d+\.\d+\.\d+$/.test(v)) throw new Error("Invalid version"); fs.appendFileSync(process.env.GITHUB_OUTPUT, `version=${v}\n`);'
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4.6.0
         with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
-
-      - name: Log in to the Container registry
-        uses: docker/login-action@v4.6.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract metadata (tags, labels) for Docker
-        id: meta
-        uses: docker/metadata-action@v6
-        with:
-          images: |
-            mattyfaz/actualtap
-            ghcr.io/${{ github.repository }}
-          tags: |
-            type=ref,event=tag
-            type=raw,value=${{ inputs.tag }},priority=600,enable=${{ github.event_name == 'workflow_dispatch' }}
-            type=raw,value=latest,priority=200,enable=${{ github.event_name == 'workflow_dispatch' }}
-
-      - name: Build and push Docker images
-        id: push
-        uses: docker/build-push-action@v7
+          username: fdotcico
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - uses: docker/build-push-action@v7
         with:
           context: .
           push: true
           platforms: linux/amd64,linux/arm64
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-
-      - name: Generate artifact attestation
-        uses: actions/attest-build-provenance@v4
-        with:
-          subject-name: ghcr.io/${{ github.repository }}
-          subject-digest: ${{ steps.push.outputs.digest }}
-          push-to-registry: true
+          tags: |
+            fdotcico/actualtap-oidc:latest
+            fdotcico/actualtap-oidc:sha-${{ github.sha }}
+            fdotcico/actualtap-oidc:${{ steps.version.outputs.version }}-${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/fdotcico/actualtap
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ steps.version.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

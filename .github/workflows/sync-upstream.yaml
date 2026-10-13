@@ -1,0 +1,66 @@
+name: Propose upstream updates
+
+on:
+  schedule:
+    - cron: '23 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    if: github.repository == 'fdotcico/actualtap'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Merge upstream while preserving fork changes
+        id: merge
+        run: |
+          git remote add upstream https://github.com/MattFaz/actualtap.git
+          git fetch upstream main
+          if git merge-base --is-ancestor upstream/main HEAD; then
+            echo 'changed=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git switch -c automation/sync-upstream
+          if ! git merge --no-edit upstream/main; then
+            echo 'Upstream conflicts with the fork. Resolve manually; no update was pushed.' >> "$GITHUB_STEP_SUMMARY"
+            git diff --name-only --diff-filter=U >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo 'changed=true' >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-node@v7
+        if: steps.merge.outputs.changed == 'true'
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Validate the proposed update
+        if: steps.merge.outputs.changed == 'true'
+        run: |
+          npm ci
+          node --test test/sync-failure.test.js test/session-auth.test.js
+          docker build -t actualtap-oidc:upstream-check .
+      - name: Open or update the pull request
+        if: steps.merge.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          git push --force-with-lease origin HEAD:refs/heads/automation/sync-upstream
+          count=$(gh pr list --head automation/sync-upstream --base main --state open --json number --jq 'length')
+          if [ "$count" = 0 ]; then
+            gh pr create --base main --head automation/sync-upstream \
+              --title 'Sync MattFaz/actualtap while retaining session-token authentication' \
+              --body 'Merges upstream history into the fork. Offline authentication and transaction tests and an amd64 Docker build passed in the sync workflow. Review compatibility with your Actual Budget server before merging. Use a merge commit to preserve upstream ancestry. Publishing runs after the merge; this workflow does not redeploy the NAS.'
+          fi
