@@ -12,7 +12,7 @@ permissions:
 jobs:
   update-version:
     runs-on: ubuntu-latest
-    if: github.actor == 'dependabot[bot]' && startsWith(github.event.pull_request.title, 'Bump @actual-app/api')
+    if: github.repository == 'MattFaz/actualtap' && github.actor == 'dependabot[bot]' && startsWith(github.event.pull_request.title, 'Bump @actual-app/api')
     
     steps:
       - name: Checkout code
@@ -83,7 +83,7 @@ jobs:
     permissions:
       pull-requests: write
       contents: write
-    if: github.actor == 'dependabot[bot]' && github.event_name == 'pull_request'
+    if: github.repository == 'MattFaz/actualtap' && github.actor == 'dependabot[bot]' && github.event_name == 'pull_request'
     steps:
       - name: Fetch Dependabot metadata
         id: metadata

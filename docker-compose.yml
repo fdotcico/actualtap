@@ -1,13 +1,13 @@
 services:
   actualtap:
     container_name: actualtap
-    image: mattyfaz/actualtap:latest
+    image: fdotcico/actualtap-oidc:latest
     ports:
-      - 3001:3001
+      - 3003:3001
     environment:
       - TZ=
       - ACTUAL_URL=
-      - ACTUAL_PASSWORD=
+      - ACTUAL_SESSION_TOKEN=
       - ACTUAL_SYNC_ID=
       - API_KEY=
     network_mode: bridge
