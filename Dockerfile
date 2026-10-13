@@ -1,5 +1,5 @@
 # Stage 1: Install dependencies
-FROM node:lts-alpine AS builder
+FROM node:24-alpine AS builder
 
 # Build tools for native modules (better-sqlite3 compiles from source)
 RUN apk add --no-cache python3 make g++
@@ -11,7 +11,7 @@ COPY package.json package-lock.json* ./
 RUN npm ci --omit=dev
 
 # Stage 2: Runtime (without npm to remove CVEs in npm's dependencies)
-FROM node:lts-alpine
+FROM node:24-alpine
 
 WORKDIR /app
 
@@ -25,6 +25,9 @@ COPY package.json ./
 RUN rm -rf /usr/local/lib/node_modules/npm \
            /usr/local/bin/npm \
            /usr/local/bin/npx
+
+ENV DATA_DIR=/data
+RUN mkdir -p /data && chmod 700 /data
 
 EXPOSE 3001
 

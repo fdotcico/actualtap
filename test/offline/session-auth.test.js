@@ -7,7 +7,7 @@ function configureEnv(t, overrides = {}) {
   const values = {
     API_KEY: 'test-key', ACTUAL_URL: 'http://actual.invalid:5006',
     ACTUAL_SYNC_ID: 'test-budget', ACTUAL_SESSION_TOKEN: 'test-session',
-    ACTUAL_PASSWORD: undefined, ACTUAL_ENCRYPTION_PASSWORD: '', ...overrides,
+    ACTUAL_PASSWORD: undefined, ACTUAL_ENCRYPTION_PASSWORD: '', DATA_DIR: './test-cache', ...overrides,
   };
   for (const [key, value] of Object.entries(values)) {
     const previous = process.env[key];
@@ -24,21 +24,22 @@ test('session token configuration works without an Actual password', async (t) =
   configureEnv(t);
   const app = fastify();
   t.after(() => app.close());
-  await app.register(require('../src/plugins/env'));
+  await app.register(require('../../src/plugins/env'));
   await app.ready();
   assert.equal(app.config.ACTUAL_SESSION_TOKEN, 'test-session');
 });
 
-test('a password alone cannot replace the required session token', async (t) => {
+test('password authentication is supported when no session token is configured', async (t) => {
   configureEnv(t, { ACTUAL_SESSION_TOKEN: undefined, ACTUAL_PASSWORD: 'test-password' });
   const app = fastify();
   t.after(() => app.close());
-  app.register(require('../src/plugins/env'));
-  await assert.rejects(app.ready(), /ACTUAL_SESSION_TOKEN/);
+  app.register(require('../../src/plugins/env'));
+  await app.ready();
+  assert.equal(app.config.ACTUAL_PASSWORD, 'test-password');
 });
 
-test('connector passes the session token to Actual and opens the configured budget', async (t) => {
-  configureEnv(t);
+for (const mode of ['sessionToken', 'password']) test(`connector forwards ${mode} correctly and opens the configured budget`, async (t) => {
+  configureEnv(t, { ACTUAL_PASSWORD: 'test-password', ...(mode === 'password' ? { ACTUAL_SESSION_TOKEN: undefined } : {}) });
   let initOptions;
   let downloadedBudget;
   let shutDown = false;
@@ -51,7 +52,7 @@ test('connector passes the session token to Actual and opens the configured budg
     shutdown: async () => { shutDown = true; },
   };
   const apiPath = require.resolve('@actual-app/api');
-  const connectorPath = require.resolve('../src/plugins/actualConnector');
+  const connectorPath = require.resolve('../../src/plugins/actualConnector');
   const previousApi = require.cache[apiPath];
   require.cache[apiPath] = { id: apiPath, filename: apiPath, loaded: true, exports: api };
   delete require.cache[connectorPath];
@@ -61,17 +62,17 @@ test('connector passes the session token to Actual and opens the configured budg
     else delete require.cache[apiPath];
   });
   t.mock.method(globalThis, 'fetch', async () => ({ status: 200 }));
-  t.mock.method(fs, 'mkdtempSync', () => 'mock-data-dir');
+  t.mock.method(fs, 'mkdirSync', () => {});
   // Initialization races a timeout; fake timers avoid leaving its 30s timer alive.
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const app = fastify();
   t.after(() => app.close());
-  app.register(require('../src/plugins/env'));
-  app.register(require('../src/plugins/actualConnector'));
+  app.register(require('../../src/plugins/env'));
+  app.register(require('../../src/plugins/actualConnector'));
   await app.ready();
-  assert.equal(initOptions.sessionToken, 'test-session');
+  assert.equal(initOptions[mode], mode === 'password' ? 'test-password' : 'test-session');
   assert.equal(initOptions.serverURL, 'http://actual.invalid:5006');
-  assert.equal(Object.hasOwn(initOptions, 'password'), false);
+  assert.equal(Object.hasOwn(initOptions, mode === 'password' ? 'sessionToken' : 'password'), false);
   assert.equal(downloadedBudget, 'test-budget');
   assert.equal(app.actualInternal, internal);
   await app.close();
