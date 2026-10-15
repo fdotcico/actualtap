@@ -4,7 +4,7 @@ This fork retains MattFaz/actualtap functionality but supports both `ACTUAL_SESS
 If both are set, the session token takes precedence. The session token
 belongs to Actual Budget; it is not a Cloudflare service token or tunnel token.
 Upstream version remains v1.0.39 (Actual API 26.10.0); fork feature version is
-1.1.0 and is reported separately in `/health`.
+1.1.1 and is reported separately in `/health`.
 
 ## GitHub and Docker Hub setup
 
@@ -57,7 +57,9 @@ with your budget; stop the container for a plain filesystem copy including WAL
 files, or use SQLite's backup API. Do not put the live database on NFS/SMB.
 
 Each accepted request is committed to SQLite with full synchronization before
-it is delivered. A serialized worker syncs remote state, checks the transaction
+it is delivered. The HTTP request waits up to four seconds for delivery to
+finish before returning `202 queued`; delivery continues in the background.
+A completed delivery returns `200 synced` immediately, without waiting out the window. A serialized worker syncs remote state, checks the transaction
 ID (including deleted records), adds only missing records, then syncs again.
 Transient errors leave requests pending and retry with exponential backoff from
 5 seconds up to 5 minutes. Requests are not discarded after a retry limit.
