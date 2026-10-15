@@ -69,7 +69,7 @@ const createTransaction = (request) => {
 
 const waitBriefly = async (work) => {
   let timer;
-  try { await Promise.race([work, new Promise((resolve) => { timer = setTimeout(resolve, 1500); })]); }
+  try { await Promise.race([work, new Promise((resolve) => { timer = setTimeout(resolve, 4000); })]); }
   finally { clearTimeout(timer); }
 };
 
