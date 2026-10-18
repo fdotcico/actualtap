@@ -69,7 +69,7 @@ const createTransaction = (request) => {
 
 const waitBriefly = async (work) => {
   let timer;
-  try { await Promise.race([work, new Promise((resolve) => { timer = setTimeout(resolve, 4000); })]); }
+  try { await Promise.race([work, new Promise((resolve) => { timer = setTimeout(resolve, 10000); })]); }
   finally { clearTimeout(timer); }
 };
 
@@ -112,10 +112,12 @@ module.exports = async (app) => {
       const status = error.statusCode || 503;
       return reply.code(status).send({ error: status === 409 ? error.message : 'Request was not accepted; check storage or retry later with the same idempotency key' });
     }
+    const waitStarted = performance.now();
     await waitBriefly(app.outbox.attempt(accepted.row.id));
     const row = app.outbox.get(accepted.row.id);
     const queued = row.state !== 'synced';
-    request.log.info({ transactionId: row.id, device: request.device.id, status: row.state, replayed: accepted.replayed }, 'Transaction request handled');
+    request.log.info({ transactionId: row.id, device: request.device.id, status: row.state, replayed: accepted.replayed,
+      waitMs: Math.round(performance.now() - waitStarted) }, 'Transaction request handled');
     reply.header('Location', `/transactions/${row.id}`);
     if (queued) reply.header('Retry-After', '5');
     return reply.code(queued ? 202 : 200).send({ ...app.outbox.response(row), replayed: accepted.replayed });

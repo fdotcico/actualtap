@@ -4,7 +4,7 @@ This fork retains MattFaz/actualtap functionality but supports both `ACTUAL_SESS
 If both are set, the session token takes precedence. The session token
 belongs to Actual Budget; it is not a Cloudflare service token or tunnel token.
 Upstream version remains v1.0.39 (Actual API 26.10.0); fork feature version is
-1.1.2 and is reported separately in `/health`.
+1.1.3 and is reported separately in `/health`.
 
 ## GitHub and Docker Hub setup
 
@@ -57,7 +57,7 @@ with your budget; stop the container for a plain filesystem copy including WAL
 files, or use SQLite's backup API. Do not put the live database on NFS/SMB.
 
 Each accepted request is committed to SQLite with full synchronization before
-it is delivered. The HTTP request waits up to four seconds for delivery to
+it is delivered. The HTTP request waits up to ten seconds for delivery to
 finish before returning `202 queued`; delivery continues in the background.
 A completed delivery returns `200 synced` immediately, without waiting out the window. A serialized worker syncs remote state, checks the transaction
 ID (including deleted records), adds only missing records, then syncs again.
@@ -66,7 +66,7 @@ An Actual API `network-failure` triggers one additional delivery attempt after
 again, including deleted records, before adding anything. Other errors skip this
 quick retry. If delivery still fails, the request remains pending and retries
 with exponential backoff from 5 seconds up to 5 minutes. The HTTP response still
-waits at most four seconds: recovery can finish later in the background.
+waits at most ten seconds: recovery can finish later in the background.
 Requests are not discarded after a retry limit.
 An Actual server outage or expired session requires service/authentication
 recovery; queued data remains on disk. Initial startup still requires Actual to
@@ -97,7 +97,9 @@ Completed payloads are removed after seven days. Hashed operation keys,
 fingerprints and transaction IDs remain as deduplication tombstones; an old replay
 then returns only its ID, status and replay indicator. Pending payloads are always
 retained. Application logs contain IDs/status, not amounts, merchants, notes,
-coordinates or credentials. The data directory itself contains financial data.
+coordinates or credentials. `waitMs` records the time the HTTP request spent
+waiting for delivery; `deliveryMs` records the duration of a worker attempt,
+including its quick retry when used. The data directory itself contains financial data.
 
 Configuration: `QUEUE_MAX_PENDING` (default 10000), `QUEUE_RETRY_MS` (5000,
 minimum 1000), `COMPLETED_PAYLOAD_DAYS` (7). Keep persistent state when upgrading or
