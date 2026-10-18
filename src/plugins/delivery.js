@@ -1,6 +1,7 @@
 const fp = require('fastify-plugin');
+const { setTimeout: delay } = require('node:timers/promises');
 
-async function deliver(app, { accountId, transaction, location }) {
+async function deliverOnce(app, { accountId, transaction, location }) {
   // Pull remote state first. Never guess whether a prior timed-out write landed.
   await app.actual.sync();
   const query = app.actual.q('transactions').withDead().filter({ id: transaction.id }).select(['id']);
@@ -22,6 +23,21 @@ async function deliver(app, { accountId, transaction, location }) {
     }
   }
   await app.actual.sync();
+}
+
+async function deliver(app, payload) {
+  try {
+    await deliverOnce(app, payload);
+  } catch (error) {
+    // Actual API exposes transport failures as a stable code. Authentication,
+    // schema and other errors must keep the outbox's normal backoff.
+    if (error?.code !== 'network-failure') throw error;
+    app.log.warn({ transactionId: payload.transaction.id }, 'Actual connection failed; retrying delivery once');
+    await delay(250);
+    // Start with sync + ID lookup again: the failed call may have reached Actual.
+    // Await the retry in the same serialized worker; never race two deliveries.
+    await deliverOnce(app, payload);
+  }
 }
 
 module.exports = fp(async (app) => {

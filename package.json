@@ -27,5 +27,5 @@
     "test:offline": "node --test test/offline/*.test.js",
     "test:integration": "node --test --test-concurrency=1 test/initialization.test.js test/transaction.test.js"
   },
-  "forkVersion": "1.1.1"
+  "forkVersion": "1.1.2"
 }
