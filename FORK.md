@@ -4,7 +4,7 @@ This fork retains MattFaz/actualtap functionality but supports both `ACTUAL_SESS
 If both are set, the session token takes precedence. The session token
 belongs to Actual Budget; it is not a Cloudflare service token or tunnel token.
 Upstream version remains v1.0.39 (Actual API 26.10.0); fork feature version is
-1.1.1 and is reported separately in `/health`.
+1.1.2 and is reported separately in `/health`.
 
 ## GitHub and Docker Hub setup
 
@@ -61,8 +61,13 @@ it is delivered. The HTTP request waits up to four seconds for delivery to
 finish before returning `202 queued`; delivery continues in the background.
 A completed delivery returns `200 synced` immediately, without waiting out the window. A serialized worker syncs remote state, checks the transaction
 ID (including deleted records), adds only missing records, then syncs again.
-Transient errors leave requests pending and retry with exponential backoff from
-5 seconds up to 5 minutes. Requests are not discarded after a retry limit.
+An Actual API `network-failure` triggers one additional delivery attempt after
+250 ms, within the same serialized worker. It syncs and checks the original ID
+again, including deleted records, before adding anything. Other errors skip this
+quick retry. If delivery still fails, the request remains pending and retries
+with exponential backoff from 5 seconds up to 5 minutes. The HTTP response still
+waits at most four seconds: recovery can finish later in the background.
+Requests are not discarded after a retry limit.
 An Actual server outage or expired session requires service/authentication
 recovery; queued data remains on disk. Initial startup still requires Actual to
 be reachable and the configured budget to open.
