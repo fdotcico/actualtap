@@ -81,15 +81,17 @@ class Outbox {
     const operation = this.tail.then(async () => {
       const row = this.get(id);
       if (!row || row.state === 'synced' || row.next_attempt > this.clock()) return;
+      const deliveryStarted = performance.now();
       try {
         await this.deliver(JSON.parse(row.payload));
         this.db.prepare("UPDATE requests SET state = 'synced', completed_at = ?, last_error = NULL WHERE id = ?").run(this.clock(), id);
-        this.logger?.info({ transactionId: id }, 'Transaction synchronized');
+        this.logger?.info({ transactionId: id, deliveryMs: Math.round(performance.now() - deliveryStarted) }, 'Transaction synchronized');
       } catch {
         const delay = Math.min(300000, this.retryMs * 2 ** Math.min(row.attempts, 16));
         this.db.prepare('UPDATE requests SET attempts = attempts + 1, next_attempt = ?, last_error = ? WHERE id = ?')
           .run(this.clock() + delay, 'delivery_failed', id);
-        this.logger?.warn({ transactionId: id, attempts: row.attempts + 1 }, 'Transaction remains queued; delivery will be retried');
+        this.logger?.warn({ transactionId: id, attempts: row.attempts + 1,
+          deliveryMs: Math.round(performance.now() - deliveryStarted) }, 'Transaction remains queued; delivery will be retried');
       }
     });
     // Never leave a rejected background promise unobserved, including disk errors.

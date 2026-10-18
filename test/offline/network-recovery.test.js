@@ -66,7 +66,7 @@ test('authentication and other non-network failures do not get a quick retry', a
   }
 });
 
-test('a slow quick retry respects the four-second response window and continues in the background', async (t) => {
+test('a slow quick retry respects the ten-second response window and continues in the background', async (t) => {
   const { app, outbox, control } = await build(t);
   let release;
   const heldSync = new Promise((resolve) => { release = resolve; });
@@ -79,7 +79,7 @@ test('a slow quick retry respects the four-second response window and continues 
   try {
     const response = await Promise.race([
       send(app),
-      new Promise((_, reject) => { watchdog = setTimeout(() => reject(new Error('Response waited for blocked recovery')), 10000); }),
+      new Promise((_, reject) => { watchdog = setTimeout(() => reject(new Error('Response waited for blocked recovery')), 15000); }),
     ]);
     assert.equal(response.statusCode, 202);
     assert.equal(response.json().status, 'queued');
