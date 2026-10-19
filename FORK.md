@@ -4,7 +4,7 @@ This fork retains MattFaz/actualtap functionality but supports both `ACTUAL_SESS
 If both are set, the session token takes precedence. The session token
 belongs to Actual Budget; it is not a Cloudflare service token or tunnel token.
 Upstream version remains v1.0.39 (Actual API 26.10.0); fork feature version is
-1.1.3 and is reported separately in `/health`.
+1.1.4 and is reported separately in `/health`.
 
 ## GitHub and Docker Hub setup
 
